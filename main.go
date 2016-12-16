@@ -9,6 +9,11 @@ import (
 	"runtime"
 )
 
+const (
+	exitOK int = iota
+	exitError
+)
+
 type (
 	Project struct {
 		VCS        string `json:"vcs"`
@@ -62,9 +67,18 @@ func apply(localProjectEnvs []ProjectEnvironment, dryRun bool) error {
 
 		remoteProjectEnv, err := getProjectEnvironment(localProjectEnv.Project)
 		if err != nil {
-			return err
+			if err.Error() == "404 Not Found" {
+				fmt.Println("Coundn't access project. Check your config or token.")
+				continue
+			} else {
+				return err
+			}
 		}
 		actions := decideAction(localProjectEnv.Environments, remoteProjectEnv.Environments)
+
+		if len(actions) == 0 {
+			fmt.Println("No environment variables found in local json and Circle CI.")
+		}
 
 		for _, v := range actions {
 
@@ -129,68 +143,67 @@ func main() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
 	var (
-		enFile     string
-		flagDryRun bool
-		flagApply  bool
-		flagExport bool
-		version    bool
-		help       bool
+		enFile      string
+		flagDryRun  bool
+		flagApply   bool
+		flagExport  bool
+		flagVersion bool
+		flagHelp    bool
 	)
 	flag.StringVar(&token, "token", "", "Circle CI API token.")
 	flag.StringVar(&enFile, "file", "en.json", "The path to the environment variabls file.")
 	flag.BoolVar(&flagDryRun, "dry-run", false, "The dry-run flag. This will be effected only with --apply.")
 	flag.BoolVar(&flagApply, "apply", false, "Apply environment variables to Circle CI from local variables file(en.json)")
 	flag.BoolVar(&flagExport, "export", false, "Export Circle CI environment variables in all of the projects that you have privilege.")
-	flag.BoolVar(&version, "version", false, "Print varsion.")
-	flag.BoolVar(&help, "help", false, "Show this usage.")
+	flag.BoolVar(&flagVersion, "version", false, "Print varsion.")
+	flag.BoolVar(&flagHelp, "help", false, "Show this usage.")
 	flag.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage of en:")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
 
-	if help {
+	exitWithPrintUsage := func(code int) {
 		flag.Usage()
-		os.Exit(0)
+		os.Exit(code)
 	}
-	if version {
-		fmt.Println(fmt.Sprintf("en version %s", Version))
-		os.Exit(0)
+	exitWithMessage := func(code int, message string) {
+		fmt.Println(message)
+		os.Exit(code)
 	}
-
-	if token == "" {
-		token = os.Getenv("CIRCLE_TOKEN")
+	setTokenFromOSEnvIfNotTokenOption := func() {
 		if token == "" {
-			fmt.Println("You need to set CIRCLE_TOKEN environment variables or -token option.")
-			os.Exit(1)
+			token = os.Getenv("CIRCLE_TOKEN")
+			if token == "" {
+				exitWithMessage(exitError, "You need to set CIRCLE_TOKEN environment variables or -token option. Run 'en -help' to see usage.")
+			}
 		}
 	}
 
-	if _, err := os.Stat(enFile); err != nil {
-		fmt.Println(err)
-		os.Exit(1)
-	}
-
-	if flagExport {
+	switch {
+	case flagHelp:
+		exitWithPrintUsage(exitOK)
+	case flagVersion:
+		exitWithMessage(exitOK, fmt.Sprintf("en version %s", version))
+	case flagExport:
+		setTokenFromOSEnvIfNotTokenOption()
 		if err := export(); err != nil {
-			fmt.Println(err)
-			os.Exit(1)
+			exitWithMessage(exitError, err.Error())
 		}
-		os.Exit(0)
-	}
-
-	if flagApply {
+	case flagApply, flagDryRun:
+		setTokenFromOSEnvIfNotTokenOption()
+		if _, err := os.Stat(enFile); err != nil {
+			exitWithMessage(exitError, err.Error())
+		}
 		projectEnvs, err := load(enFile)
 		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
+			exitWithMessage(exitError, err.Error())
 		}
-		if err := apply(projectEnvs, flagDryRun); err != nil {
-			fmt.Println(err)
-			os.Exit(1)
-		}
-		os.Exit(0)
-	}
 
-	flag.Usage()
+		if err := apply(projectEnvs, flagDryRun); err != nil {
+			exitWithMessage(exitError, err.Error())
+		}
+	default:
+		exitWithPrintUsage(exitOK)
+	}
 }

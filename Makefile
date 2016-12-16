@@ -1,3 +1,6 @@
+.PHONY: all clean build
+
+all: clean build
 
 test:
 	go test -v
@@ -7,3 +10,4 @@ build: test
 
 clean:
 	rm -f en
+
